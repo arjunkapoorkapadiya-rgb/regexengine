@@ -3,62 +3,53 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 )
 
 const usage = `regexengine — a regex engine built from scratch
 
 usage:
   regexengine match <pattern> <text>       test if text matches pattern
-  regexengine find <pattern> <text>        find first match (prints index + length)
+  regexengine find <pattern> <text>        find first match
   regexengine findall <pattern> <text>     find all matches
   regexengine replace <pattern> <text> <replacement>
   regexengine groups <pattern> <text>      show capture groups
   regexengine version                      print version
-
-examples:
-  regexengine match "abc" "xabcy"
-  regexengine find "a+" "aaabbb"
-  regexengine replace "\d+" "abc123def" "X"
 `
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Print(usage)
 		os.Exit(1)
 	}
-
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
 	switch cmd {
 	case "match":
-		if err := cmdMatch(args); err != nil {
-			fatal(err)
-		}
+		handle(cmdMatch(args))
 	case "find":
-		if err := cmdFind(args); err != nil {
-			fatal(err)
-		}
+		handle(cmdFind(args))
 	case "findall":
-		if err := cmdFindAll(args); err != nil {
-			fatal(err)
-		}
+		handle(cmdFindAll(args))
 	case "replace":
-		if err := cmdReplace(args); err != nil {
-			fatal(err)
-		}
+		handle(cmdReplace(args))
 	case "groups":
-		if err := cmdGroups(args); err != nil {
-			fatal(err)
-		}
+		handle(cmdGroups(args))
 	case "version":
 		fmt.Println(version)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 	default:
 		fatal(fmt.Errorf("unknown command: %s", cmd))
+	}
+}
+
+func handle(err error) {
+	if err != nil {
+		fatal(err)
 	}
 }
 
@@ -129,27 +120,13 @@ func cmdReplace(args []string) error {
 	return nil
 }
 
-// cmdGroups prints capture groups for the first match.
 func cmdGroups(args []string) error {
 	if len(args) != 2 {
 		return fmt.Errorf("usage: regexengine groups <pattern> <text>")
 	}
 	pattern, text := args[0], args[1]
 
-	// Count groups in pattern
-	ast, err := compilePattern(pattern)
-	if err != nil {
-		return err
-	}
-	groupCount := countGroups(ast)
-
-	if groupCount == 0 {
-		fmt.Println("(no capture groups in pattern)")
-		return nil
-	}
-
-	// For now, just show that we detect them
-	result, found, err := FindWithGroups(pattern, text)
+	start, end, captures, found, err := MatchWithCaptures(pattern, text)
 	if err != nil {
 		return err
 	}
@@ -158,37 +135,23 @@ func cmdGroups(args []string) error {
 		return nil
 	}
 
-	fmt.Printf("match at index %d, length %d\n", result.Start, result.Length)
-	fmt.Printf("pattern has %d capture group(s)\n", groupCount)
-	// Actual capture extraction is coming next.
-	return nil
-}
+	fmt.Printf("match at index %d, length %d\n", start, end-start)
+	fmt.Printf("matched: %q\n", text[start:end])
 
-// countGroups counts Group nodes in the AST.
-func countGroups(node Node) int {
-	switch v := node.(type) {
-	case Group:
-		return 1 + countGroups(v.Inner)
-	case Concat:
-		n := 0
-		for _, p := range v.Parts {
-			n += countGroups(p)
-		}
-		return n
-	case Alternate:
-		n := 0
-		for _, c := range v.Choices {
-			n += countGroups(c)
-		}
-		return n
-	case Star:
-		return countGroups(v.Inner)
-	case Plus:
-		return countGroups(v.Inner)
-	case Quest:
-		return countGroups(v.Inner)
-	case Repeat:
-		return countGroups(v.Inner)
+	if len(captures) == 0 {
+		fmt.Println("(no capture groups)")
+		return nil
 	}
-	return 0
+
+	// Sort group indices
+	indices := make([]int, 0, len(captures))
+	for i := range captures {
+		indices = append(indices, i)
+	}
+	sort.Ints(indices)
+
+	for _, i := range indices {
+		fmt.Printf("  group %d: %q\n", i, captures[i])
+	}
+	return nil
 }
