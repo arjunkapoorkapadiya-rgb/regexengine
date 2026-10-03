@@ -2,14 +2,12 @@ package main
 
 import "fmt"
 
-// Parser turns tokens into an AST.
 type Parser struct {
 	tokens     []Token
 	pos        int
-	groupCount int // tracks how many capturing groups we've seen
+	groupCount int
 }
 
-// NewParser builds a parser from a pattern string.
 func NewParser(pattern string) (*Parser, error) {
 	lex := NewLexer(pattern)
 	toks, err := lex.Tokenize()
@@ -19,7 +17,6 @@ func NewParser(pattern string) (*Parser, error) {
 	return &Parser{tokens: toks, pos: 0}, nil
 }
 
-// Parse builds the AST.
 func (p *Parser) Parse() (Node, error) {
 	node, err := p.parseAlternation()
 	if err != nil {
@@ -31,7 +28,6 @@ func (p *Parser) Parse() (Node, error) {
 	return node, nil
 }
 
-// peek returns the current token without consuming.
 func (p *Parser) peek() Token {
 	if p.pos >= len(p.tokens) {
 		return Token{Type: TokEOF}
@@ -39,41 +35,34 @@ func (p *Parser) peek() Token {
 	return p.tokens[p.pos]
 }
 
-// advance consumes and returns the current token.
 func (p *Parser) advance() Token {
 	t := p.peek()
 	p.pos++
 	return t
 }
 
-// parseAlternation: concatenation ('|' concatenation)*
 func (p *Parser) parseAlternation() (Node, error) {
 	first, err := p.parseConcat()
 	if err != nil {
 		return nil, err
 	}
-
 	if p.peek().Type != TokPipe {
 		return first, nil
 	}
-
 	choices := []Node{first}
 	for p.peek().Type == TokPipe {
-		p.advance() // consume '|'
+		p.advance()
 		next, err := p.parseConcat()
 		if err != nil {
 			return nil, err
 		}
 		choices = append(choices, next)
 	}
-
 	return Alternate{Choices: choices}, nil
 }
 
-// parseConcat: repetition+
 func (p *Parser) parseConcat() (Node, error) {
 	var parts []Node
-
 	for {
 		t := p.peek()
 		if t.Type == TokEOF || t.Type == TokPipe || t.Type == TokRParen {
@@ -85,7 +74,6 @@ func (p *Parser) parseConcat() (Node, error) {
 		}
 		parts = append(parts, part)
 	}
-
 	if len(parts) == 0 {
 		return Empty{}, nil
 	}
@@ -95,13 +83,11 @@ func (p *Parser) parseConcat() (Node, error) {
 	return Concat{Parts: parts}, nil
 }
 
-// parseRepetition: atom ('*' | '+' | '?' | '{n,m}')*
 func (p *Parser) parseRepetition() (Node, error) {
 	atom, err := p.parseAtom()
 	if err != nil {
 		return nil, err
 	}
-
 	for {
 		t := p.peek()
 		switch t.Type {
@@ -127,9 +113,7 @@ func (p *Parser) parseRepetition() (Node, error) {
 	}
 }
 
-// parseRepeatCount reads "{n}" or "{n,m}" or "{n,}". Assumes '{' already consumed.
 func (p *Parser) parseRepeatCount() (int, int, error) {
-	// Read first number
 	t := p.advance()
 	if t.Type != TokLiteral || t.Ch < '0' || t.Ch > '9' {
 		return 0, 0, fmt.Errorf("expected digit after '{' at position %d", t.Pos)
@@ -145,23 +129,19 @@ func (p *Parser) parseRepeatCount() (int, int, error) {
 		}
 	}
 
-	// Either '}' or ',' follows
 	t = p.advance()
 	if t.Type == TokRBrace {
-		// {n} means exactly n
 		return min, min, nil
 	}
 	if t.Type != TokComma {
 		return 0, 0, fmt.Errorf("expected ',' or '}' at position %d, got %s", t.Pos, t)
 	}
 
-	// After comma: either digit(s) then '}' or immediate '}'
 	t = p.peek()
 	if t.Type == TokRBrace {
 		p.advance()
-		return min, -1, nil // {n,} means n or more
+		return min, -1, nil
 	}
-
 	if t.Type != TokLiteral || t.Ch < '0' || t.Ch > '9' {
 		return 0, 0, fmt.Errorf("expected digit or '}' after ',' at position %d", t.Pos)
 	}
@@ -176,7 +156,6 @@ func (p *Parser) parseRepeatCount() (int, int, error) {
 			break
 		}
 	}
-
 	t = p.advance()
 	if t.Type != TokRBrace {
 		return 0, 0, fmt.Errorf("expected '}' at position %d, got %s", t.Pos, t)
@@ -184,7 +163,6 @@ func (p *Parser) parseRepeatCount() (int, int, error) {
 	return min, max, nil
 }
 
-// parseAtom parses a single atom (literal, group, class, etc.).
 func (p *Parser) parseAtom() (Node, error) {
 	t := p.advance()
 
@@ -200,15 +178,12 @@ func (p *Parser) parseAtom() (Node, error) {
 	case TokDollar:
 		return AnchorEnd{}, nil
 	case TokDigit:
-		// \d = [0-9]
 		return CharClass{Ranges: [][2]byte{{'0', '9'}}}, nil
 	case TokWord:
-		// \w = [a-zA-Z0-9_]
 		return CharClass{Ranges: [][2]byte{
 			{'a', 'z'}, {'A', 'Z'}, {'0', '9'}, {'_', '_'},
 		}}, nil
 	case TokSpace:
-		// \s = [ \t\n\r\f\v]
 		return CharClass{Ranges: [][2]byte{
 			{' ', ' '}, {'\t', '\t'}, {'\n', '\n'},
 			{'\r', '\r'}, {'\f', '\f'}, {'\v', '\v'},
@@ -232,11 +207,14 @@ func (p *Parser) parseAtom() (Node, error) {
 	}
 }
 
-// parseCharClass reads "[...]" contents. Assumes '[' already consumed.
+// isDashToken returns true if the token is a literal '-'.
+func isDashToken(t Token) bool {
+	return t.Type == TokLiteral && t.Ch == '-'
+}
+
 func (p *Parser) parseCharClass() (Node, error) {
 	cc := CharClass{}
 
-	// Optional negation: [^...]
 	if p.peek().Type == TokCaret {
 		p.advance()
 		cc.Negated = true
@@ -253,33 +231,23 @@ func (p *Parser) parseCharClass() (Node, error) {
 			break
 		}
 		if t.Type == TokRBracket && first {
-			// "[]" is technically a literal ']' in many regex flavors;
-			// we'll just include ']' literally.
 			p.advance()
 			cc.Ranges = append(cc.Ranges, [2]byte{']', ']'})
 			first = false
 			continue
 		}
 
-		// Read lo
 		lo, err := p.readClassChar()
 		if err != nil {
 			return nil, err
 		}
 
-		// Check for range "lo-hi"
-		if p.peek().Type == TokDash {
-			// Look ahead: if next is ']' then it's a literal dash
-			save := p.pos
+		// Check for range: literal '-' between two class chars
+		if isDashToken(p.peek()) {
 			p.advance() // consume '-'
 			if p.peek().Type == TokRBracket {
 				// Trailing '-' is literal
 				cc.Ranges = append(cc.Ranges, [2]byte{lo, lo})
-				cc.Ranges = append(cc.Ranges, [2]byte{'-', '-'})
-				p.pos = save
-				p.advance() // re-consume '-' ... actually we want to keep parsing
-				// Simplify: just push literal '-' and continue
-				cc.Ranges = cc.Ranges[:len(cc.Ranges)-1]
 				cc.Ranges = append(cc.Ranges, [2]byte{'-', '-'})
 				first = false
 				continue
@@ -301,7 +269,6 @@ func (p *Parser) parseCharClass() (Node, error) {
 	return cc, nil
 }
 
-// readClassChar reads one character inside a char class (handles escapes).
 func (p *Parser) readClassChar() (byte, error) {
 	t := p.advance()
 	switch t.Type {
@@ -310,33 +277,25 @@ func (p *Parser) readClassChar() (byte, error) {
 	case TokEscape:
 		return t.Ch, nil
 	case TokDigit:
-		// For simplicity, \d inside class expands to first range only (rare case)
 		return '0', nil
 	case TokWord:
 		return '_', nil
 	case TokSpace:
 		return ' ', nil
-	case TokLBracket, TokRBracket, TokDash, TokCaret, TokDollar, TokPipe:
-		// Treat operator chars as literals inside a class
-		switch t.Type {
-		case TokLBracket:
-			return '[', nil
-		case TokRBracket:
-			return ']', nil
-		case TokDash:
-			return '-', nil
-		case TokCaret:
-			return '^', nil
-		case TokDollar:
-			return '$', nil
-		case TokPipe:
-			return '|', nil
-		}
+	case TokLBracket:
+		return '[', nil
+	case TokRBracket:
+		return ']', nil
+	case TokCaret:
+		return '^', nil
+	case TokDollar:
+		return '$', nil
+	case TokPipe:
+		return '|', nil
 	}
 	return 0, fmt.Errorf("invalid character in class at position %d: %s", t.Pos, t)
 }
 
-// compile is a helper for one-shot parsing.
 func compilePattern(pattern string) (Node, error) {
 	p, err := NewParser(pattern)
 	if err != nil {

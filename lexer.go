@@ -58,8 +58,6 @@ func (l *Lexer) next() (Token, error) {
 		return Token{Type: TokLBracket, Pos: start}, nil
 	case ']':
 		return Token{Type: TokRBracket, Pos: start}, nil
-	case '-':
-		return Token{Type: TokDash, Pos: start}, nil
 	case '^':
 		return Token{Type: TokCaret, Pos: start}, nil
 	case '$':
@@ -71,7 +69,6 @@ func (l *Lexer) next() (Token, error) {
 	case ',':
 		return Token{Type: TokComma, Pos: start}, nil
 	case '\\':
-		// Escape sequence
 		if l.pos >= len(l.pattern) {
 			return Token{}, fmt.Errorf("trailing backslash at position %d", start)
 		}
@@ -85,12 +82,12 @@ func (l *Lexer) next() (Token, error) {
 		case 's':
 			return Token{Type: TokSpace, Pos: start}, nil
 		case 'D', 'W', 'S':
-			// Negated shorthands — treat as escapes for now, handle in parser
 			return Token{Type: TokEscape, Ch: esc, Pos: start}, nil
 		default:
 			return Token{Type: TokEscape, Ch: esc, Pos: start}, nil
 		}
 	default:
+		// Everything else (including '-' and other symbols) is a literal.
 		return Token{Type: TokLiteral, Ch: ch, Pos: start}, nil
 	}
 }
